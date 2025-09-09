@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tab Memory Monitor</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="header">
+    <div class="logo">🔧</div>
+    <div class="title">
+      <div>Tab Memory Monitor</div>
+      <small id="sourceLabel"></small>
+    </div>
+    <div class="header-controls">
+      <button id="viewModeBtn" class="btn ghost" title="Switch View">📋</button>
+      <button id="refreshBtn" class="btn ghost" title="Refresh">↻</button>
+    </div>
+  </header>
+
+  <section class="summary" id="summary"></section>
+  
+  <!-- Current Window View -->
+  <div id="currentWindowView" class="view">
+    <section id="list" class="list"></section>
+  </div>
+  
+  <!-- All Windows View -->
+  <div id="allWindowsView" class="view hidden">
+    <section id="windowsList" class="windows-list"></section>
+  </div>
+
+  <footer class="footer">
+    <small>Tip: Red = high memory, green = low memory. You can close a tab from here.</small>
+  </footer>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>
