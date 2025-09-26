@@ -1,12 +1,13 @@
 # Stock Agent Plugin - Personal Configuration
 # Add your Gemini API key below
 
-GEMINI_API_KEY=AIzaSyBIK64KbLnsESt_Q8qBWWxq4V5RvuYQYFA
+# Paste Below
+GEMINI_API_KEY=
 DEFAULT_TICKER=AAPL
 
 # Telegram Bot Configuration
-TELEGRAM_BOT_TOKEN=8383663828:AAHyfmI2EnMtlSxWQYrTlV3bU03Oe7ImQLc
-TELEGRAM_CHAT_ID=6474797034
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
 
 # Price Monitoring Settings
 PRICE_THRESHOLD=150.00
