@@ -7,6 +7,8 @@ An AI-powered Chrome extension that uses Google Gemini AI to get and display sto
 - 🤖 **AI-Powered**: Uses Google Gemini AI to intelligently process stock requests
 - 📈 **Real-time Stock Data**: Fetches current stock prices from Yahoo Finance
 - 🔄 **Iterative Processing**: AI agent works through multiple steps to get accurate results
+- 📊 **Price Monitoring**: Monitor stock prices and get alerts when they exceed thresholds
+- 📱 **Telegram Notifications**: Receive instant alerts on your phone via Telegram
 - 💾 **Secure Storage**: API keys are stored locally in the browser
 - 🎨 **Modern UI**: Clean, responsive interface with gradient design
 
@@ -33,6 +35,14 @@ An AI-powered Chrome extension that uses Google Gemini AI to get and display sto
    # Open config.txt and replace with your actual API key
    GEMINI_API_KEY=your_actual_api_key_here
    DEFAULT_TICKER=AAPL
+   
+   # Telegram Bot Configuration (optional)
+   TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+   TELEGRAM_CHAT_ID=your_telegram_chat_id_here
+   
+   # Price Monitoring Settings
+   PRICE_THRESHOLD=150.00
+   MONITORING_ENABLED=true
    ```
 
 2. **Load in Chrome**
@@ -82,6 +92,42 @@ An AI-powered Chrome extension that uses Google Gemini AI to get and display sto
    - Call appropriate functions
    - Fetch real-time stock data
    - Display the results
+
+### Price Monitoring & Alerts
+
+1. **Set up Telegram Bot** (optional but recommended):
+   - Create a bot with @BotFather on Telegram
+   - Get your bot token and chat ID
+   - Add them to your `config.txt` file
+
+2. **Start Monitoring**:
+   - Enter a stock ticker symbol
+   - Set your price threshold (e.g., $150.00)
+   - Check "Enable Telegram notifications" if you want alerts
+   - Click "Start Monitoring"
+
+3. **Receive Alerts**:
+   - The plugin checks prices every 30 seconds
+   - When the price exceeds your threshold, you'll get a Telegram message
+   - Monitoring stops automatically after the first alert
+
+### Telegram Setup (Optional)
+
+1. **Create a Telegram Bot**:
+   - Message @BotFather on Telegram
+   - Send `/newbot` and follow the instructions
+   - Copy the bot token
+
+2. **Get Your Chat ID**:
+   - Send a message to your new bot
+   - Visit: `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates`
+   - Find your chat ID in the response
+
+3. **Add to Config**:
+   ```
+   TELEGRAM_BOT_TOKEN=your_actual_bot_token
+   TELEGRAM_CHAT_ID=your_actual_chat_id
+   ```
 
 ### Supported Tickers
 

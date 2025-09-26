@@ -2,6 +2,13 @@
 document.addEventListener('DOMContentLoaded', function() {
     const tickerInput = document.getElementById('tickerInput');
     const getPriceBtn = document.getElementById('getPriceBtn');
+    const thresholdInput = document.getElementById('thresholdInput');
+    const monitoringInterval = document.getElementById('monitoringInterval');
+    const monitoringEnabled = document.getElementById('monitoringEnabled');
+    const startMonitoringBtn = document.getElementById('startMonitoringBtn');
+    const stopMonitoringBtn = document.getElementById('stopMonitoringBtn');
+    const monitoringStatus = document.getElementById('monitoringStatus');
+    const monitoringIntervalText = document.getElementById('monitoringIntervalText');
     const loading = document.getElementById('loading');
     const results = document.getElementById('results');
     const error = document.getElementById('error');
@@ -13,10 +20,20 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Event listeners
     getPriceBtn.addEventListener('click', handleGetPrice);
+    startMonitoringBtn.addEventListener('click', startMonitoring);
+    stopMonitoringBtn.addEventListener('click', stopMonitoring);
     tickerInput.addEventListener('keypress', function(e) {
         if (e.key === 'Enter') {
             handleGetPrice();
         }
+    });
+    
+    // Preset threshold buttons
+    document.querySelectorAll('.preset-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const value = this.getAttribute('data-value');
+            thresholdInput.value = value;
+        });
     });
 
 
@@ -181,10 +198,23 @@ document.addEventListener('DOMContentLoaded', function() {
                                 setupDate: new Date().toISOString()
                             });
                             
-                            // API key loaded successfully
-                            
                             console.log('✅ API key loaded from config.txt');
-                            return;
+                        }
+                    }
+                    
+                    if (line.includes('PRICE_THRESHOLD=') && !line.startsWith('#')) {
+                        const threshold = line.split('=')[1].trim();
+                        if (threshold && threshold !== '150.00') {
+                            thresholdInput.value = threshold;
+                            console.log('✅ Default threshold loaded from config.txt');
+                        }
+                    }
+                    
+                    if (line.includes('MONITORING_ENABLED=') && !line.startsWith('#')) {
+                        const enabled = line.split('=')[1].trim().toLowerCase();
+                        if (enabled === 'true') {
+                            monitoringEnabled.checked = true;
+                            console.log('✅ Telegram notifications enabled from config.txt');
                         }
                     }
                 }
@@ -192,5 +222,102 @@ document.addEventListener('DOMContentLoaded', function() {
         } catch (error) {
             console.log('No config.txt file found or error reading it');
         }
+    }
+
+    async function startMonitoring() {
+        const ticker = tickerInput.value.trim().toUpperCase();
+        const threshold = parseFloat(thresholdInput.value);
+        const interval = parseInt(monitoringInterval.value);
+        
+        if (!ticker) {
+            showError('Please enter a stock ticker symbol');
+            return;
+        }
+        
+        if (!threshold || threshold <= 0) {
+            showError('Please enter a valid price threshold (must be greater than $0)');
+            return;
+        }
+        
+        if (threshold < 0.01) {
+            showError('Price threshold must be at least $0.01');
+            return;
+        }
+
+        try {
+            // Start monitoring in background script
+            const response = await chrome.runtime.sendMessage({
+                action: 'startMonitoring',
+                ticker: ticker,
+                threshold: threshold,
+                interval: interval,
+                telegramEnabled: monitoringEnabled.checked
+            });
+
+            if (response.success) {
+                startMonitoringBtn.style.display = 'none';
+                stopMonitoringBtn.style.display = 'inline-block';
+                monitoringStatus.classList.remove('hidden');
+                const intervalText = getIntervalText(interval);
+                monitoringIntervalText.textContent = `(checking every ${intervalText})`;
+                showSuccess(`Monitoring started for ${ticker} at $${threshold}! Checking every ${intervalText}. You will receive notifications when the price exceeds the threshold.`);
+            } else {
+                showError(response.error || 'Failed to start monitoring');
+            }
+        } catch (err) {
+            showError('Error starting monitoring: ' + err.message);
+        }
+    }
+
+    async function stopMonitoring() {
+        try {
+            const response = await chrome.runtime.sendMessage({
+                action: 'stopMonitoring'
+            });
+
+            if (response.success) {
+                startMonitoringBtn.style.display = 'inline-block';
+                stopMonitoringBtn.style.display = 'none';
+                monitoringStatus.classList.add('hidden');
+                monitoringIntervalText.textContent = '';
+                showSuccess('Monitoring stopped.');
+            } else {
+                showError(response.error || 'Failed to stop monitoring');
+            }
+        } catch (err) {
+            showError('Error stopping monitoring: ' + err.message);
+        }
+    }
+
+    function showSuccess(message) {
+        // Create a temporary success message
+        const successDiv = document.createElement('div');
+        successDiv.style.cssText = `
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: #27ae60;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 5px;
+            z-index: 1000;
+            font-size: 14px;
+        `;
+        successDiv.textContent = message;
+        document.body.appendChild(successDiv);
+        
+        setTimeout(() => {
+            document.body.removeChild(successDiv);
+        }, 3000);
+    }
+
+    function getIntervalText(intervalMs) {
+        const intervals = {
+            900000: '15 minutes',
+            3600000: '1 hour',
+            7200000: '2 hours',
+            21600000: '6 hours'
+        };
+        return intervals[intervalMs] || 'unknown interval';
     }
 });
