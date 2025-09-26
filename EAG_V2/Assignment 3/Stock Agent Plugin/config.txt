@@ -1,0 +1,5 @@
+# Stock Agent Plugin - Personal Configuration
+# Add your Gemini API key below
+
+GEMINI_API_KEY=AIzaSyBIK64KbLnsESt_Q8qBWWxq4V5RvuYQYFA
+DEFAULT_TICKER=AAPL

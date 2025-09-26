@@ -26,6 +26,28 @@ An AI-powered Chrome extension that uses Google Gemini AI to get and display sto
 
 ### Setup Steps
 
+#### Option 1: Using Config File (Recommended for Personal Use)
+
+1. **Edit config.txt file**
+   ```bash
+   # Open config.txt and replace with your actual API key
+   GEMINI_API_KEY=your_actual_api_key_here
+   DEFAULT_TICKER=AAPL
+   ```
+
+2. **Load in Chrome**
+   - Open Chrome and go to `chrome://extensions/`
+   - Enable "Developer mode" (toggle in top right)
+   - Click "Load unpacked"
+   - Select the "Stock Agent Plugin" folder
+
+3. **Start Using**
+   - The plugin will automatically load your API key from config.txt
+   - Enter a stock ticker symbol (e.g., AAPL)
+   - Click "Get Stock Price"
+
+#### Option 2: Manual Setup
+
 1. **Download the Plugin**
    ```bash
    git clone <repository-url>
@@ -102,6 +124,10 @@ Stock Agent Plugin/
 ├── popup.css             # Styling and layout
 ├── popup.js              # Frontend logic
 ├── background.js         # API calls and AI processing
+├── setup.html            # Setup page for API key configuration
+├── setup.js              # Setup script for environment variables
+├── setup_from_env.py     # Python script to read .env and setup
+├── env_example.txt       # Example environment variables file
 ├── icons/                # Extension icons
 │   ├── icon16.png
 │   ├── icon48.png
