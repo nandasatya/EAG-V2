@@ -1,185 +1,228 @@
-# orchestrator.py
-# Uses Gemini 2.0 Flash function-calling to:
-#  - Solve a multi-step problem (>=6 steps), each as a tool call via MCP
-#  - Validate the result
-#  - Send Telegram message with question + answer
-#  - Finally, print ONLY the final numeric answer
-#
-# Usage:
-#   python orchestrator.py "Compute: ((3/4) + (5/6)) * (7 - (2 + 9/3))^2 + 15 / (3 * (2 + 1))"
-#   # or just: python orchestrator.py    (uses a default problem)
-from __future__ import annotations
-
-import asyncio
 import os
-import sys
-from typing import Dict, Any, List
-
 from dotenv import load_dotenv
-load_dotenv()
-
-# --- Gemini (Google GenAI Python SDK) ---
-from google.genai import Client as GenAIClient
-from google.genai import types as gg
-
-# --- MCP client (stdio transport) ---
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+import google.generativeai as genai
+import asyncio
+from rich.console import Console
+from rich.panel import Panel
+import sys
 
-SYSTEM_INSTRUCTION = """
-You are a math-solving agent. Your rules:
-1) PREFER evaluate_expression for most problems - it can handle complex expressions in ONE call.
-2) Only use step_add, step_subtract, step_multiply, step_divide, step_power for multi-step explanations.
-3) When you have a final answer, call check_answer ONCE to verify it.
-4) After verification, respond with ONLY the final numeric answer (no other text).
-5) Do NOT call send_telegram unless explicitly requested.
-6) MINIMIZE API calls - use the fewest tools possible.
+console = Console()
 
-Example for "2 + 3":
-- Call: evaluate_expression(expr="2 + 3")  → returns 5
-- Call: check_answer(verifier_expression="2 + 3", final_answer=5)
-- Response: "5"
+# Load environment variables and setup Gemini
+load_dotenv()
+api_key = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=api_key)
 
-Example for complex: "((3/4) + (5/6)) * (7 - (2 + 9/3))^2":
-- Call: evaluate_expression(expr="((3/4) + (5/6)) * (7 - (2 + 9/3))**2")
-- Call: check_answer(...) 
-- Response: "<result>"
-"""
+async def generate_with_timeout(client, prompt, timeout=30):
+    """Generate content with a timeout"""
+    try:
+        loop = asyncio.get_event_loop()
+        response = await asyncio.wait_for(
+            loop.run_in_executor(
+                None, 
+                lambda: client.generate_content(prompt)
+            ),
+            timeout=timeout
+        )
+        return response
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        return None
 
-# Function declarations for Gemini (mirror MCP tools)
-def function_declarations() -> gg.Tool:
-    def fn(name: str, desc: str, props: Dict[str, Any], required: List[str]) -> gg.FunctionDeclaration:
-        return gg.FunctionDeclaration(
-            name=name,
-            description=desc,
-            parameters=gg.Schema(type="OBJECT", properties=props, required=required),
+async def main():
+    try:
+        console.print(Panel("Math Problem Solver", border_style="cyan"))
+
+        server_params = StdioServerParameters(
+            command="python3",
+            args=["mcp_math_server.py"]
         )
 
-    fns = [
-        fn("step_add", "Add two numbers as a single step.",
-           {"a": gg.Schema(type="NUMBER"), "b": gg.Schema(type="NUMBER"), "note": gg.Schema(type="STRING")},
-           ["a", "b"]),
-        fn("step_subtract", "Subtract b from a as a single step.",
-           {"a": gg.Schema(type="NUMBER"), "b": gg.Schema(type="NUMBER"), "note": gg.Schema(type="STRING")},
-           ["a", "b"]),
-        fn("step_multiply", "Multiply two numbers as a single step.",
-           {"a": gg.Schema(type="NUMBER"), "b": gg.Schema(type="NUMBER"), "note": gg.Schema(type="STRING")},
-           ["a", "b"]),
-        fn("step_divide", "Divide a by b as a single step.",
-           {"a": gg.Schema(type="NUMBER"), "b": gg.Schema(type="NUMBER"), "note": gg.Schema(type="STRING")},
-           ["a", "b"]),
-        fn("step_power", "Compute base^exponent as a single step.",
-           {"base": gg.Schema(type="NUMBER"), "exponent": gg.Schema(type="NUMBER"), "note": gg.Schema(type="STRING")},
-           ["base", "exponent"]),
-        fn("simplify_expression", "Simplify a string math expression.",
-           {"expression": gg.Schema(type="STRING")}, ["expression"]),
-        fn("evaluate_expression", "Evaluate a numeric expression string.",
-           {"expression": gg.Schema(type="STRING")}, ["expression"]),
-        fn("check_answer", "Validate final answer by re-evaluating verifier_expression and comparing to final_answer within tolerance.",
-           {"verifier_expression": gg.Schema(type="STRING"),
-            "final_answer": gg.Schema(type="NUMBER"),
-            "tolerance": gg.Schema(type="NUMBER")}, ["verifier_expression", "final_answer"]),
-        fn("send_telegram", "Send the question and final answer via Telegram using env credentials on the MCP server.",
-           {"message": gg.Schema(type="STRING")}, ["message"]),
-    ]
-    return gg.Tool(function_declarations=fns)
+        async with stdio_client(server_params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
 
-async def connect_mcp(server_script_path: str):
-    """
-    Launch the MCP server over stdio and return a connected ClientSession.
-    Returns an async context manager that yields (read, write, session).
-    """
-    params = StdioServerParameters(command="python3", args=[server_script_path], env=None)
-    return stdio_client(params)
+                system_prompt = """You are a mathematical reasoning agent that solves problems efficiently.
 
-async def run():
-    problem = " ".join(sys.argv[1:]).strip() or \
-        "Compute: ((3/4) + (5/6)) * (7 - (2 + 9/3))^2 + 15 / (3 * (2 + 1))"
+You have these tools:
+- evaluate_expression(expr: str) - Evaluate math expressions
+- check_answer(verifier_expression: str, final_answer: float) - Verify results
 
-    gemini_api_key = os.getenv("GEMINI_API_KEY")
-    if not gemini_api_key:
-        raise RuntimeError("Missing GEMINI_API_KEY in environment")
+CRITICAL RULES:
+1. Call evaluate_expression ONCE with the full problem
+2. Call check_answer ONCE to verify
+3. Give FINAL_ANSWER
+4. DO NOT repeat function calls
+5. DO NOT call the same function multiple times
 
-    # 1) Connect to MCP server (spawns our math server over stdio)
-    stdio_cm = await connect_mcp("mcp_math_server.py")
-    
-    async with stdio_cm as (read, write):
-        async with ClientSession(read, write) as mcp_session:
-            await mcp_session.initialize()
-            
-            # Optional: list tools for visibility
-            tools = await mcp_session.list_tools()
-            print("MCP tools:", [t.name for t in tools.tools])
+Respond with EXACTLY ONE line in this format:
+FUNCTION_CALL: function_name|param1|param2|...
+or
+FINAL_ANSWER: [answer]
 
-            # 2) Prepare Gemini client + config
-            client = GenAIClient(api_key=gemini_api_key)
+Example workflow:
+User: Solve 2 + 3
+Assistant: FUNCTION_CALL: evaluate_expression|2 + 3
+User: Result is 5. Let's verify.
+Assistant: FUNCTION_CALL: check_answer|2 + 3|5
+User: Verified correct.
+Assistant: FINAL_ANSWER: [5]
 
-            tool = function_declarations()
-            cfg = gg.GenerateContentConfig(
-                system_instruction=SYSTEM_INSTRUCTION,
-                tools=[tool],
-                # Force tool usage whenever the model wants (and allow multi-tool turns)
-                tool_config=gg.ToolConfig(
-                    function_calling_config=gg.FunctionCallingConfig(mode="ANY")
-                ),
-                temperature=0.2,
-                max_output_tokens=2048,
-            )
+IMPORTANT: Never repeat a function call. Once you get a result, move to the next step immediately."""
 
-            # 3) Start the conversation
-            contents: list[gg.Content] = [
-                gg.Content(role="user", parts=[gg.Part(text=problem)])
-            ]
+                problem = " ".join(sys.argv[1:]).strip() or "((3/4) + (5/6)) * (7 - (2 + 9/3))^2 + 15 / (3 * (2 + 1))"
+                console.print(Panel(f"Problem: {problem}", border_style="cyan"))
 
-            final_text: str = ""
+                # Initialize conversation
+                prompt = f"{system_prompt}\n\nSolve this problem step by step: {problem}"
+                conversation_history = []
+                executed_calls = set()  # Prevent duplicate tool invocations
+                
+                # Initialize Gemini client
+                client = genai.GenerativeModel('gemini-2.0-flash')
 
-            while True:
-                resp = client.models.generate_content(
-                    model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash-001"),
-                    contents=contents,
-                    config=cfg,
-                )
+                while True:
+                    response = await generate_with_timeout(client, prompt)
+                    if not response or not response.text:
+                        break
 
-                # If the model decided to call functions, handle them
-                fcs = getattr(resp, "function_calls", None) or []
-                if not fcs:
-                    # No function calls; treat as final text
-                    final_text = (resp.text or "").strip()
-                    break
+                    result = response.text.strip()
+                    console.print(f"\n[yellow]A:[/yellow] {result}")
 
-                # Gemini can emit multiple function calls in one turn
-                # We will execute each via MCP, then append function_response parts.
-                contents.append(resp.candidates[0].content)  # preserve the function_call part(s)
-                for fc in fcs:
-                    name = fc.name
-                    args = dict(fc.function_call.args) if hasattr(fc, "function_call") else {}
-                    # Call MCP tool
-                    result = await mcp_session.call_tool(name, args)
-                    # The MCP SDK returns a ToolResponse; we want its "content" or structured data
-                    # We'll pass structured content back to Gemini:
-                    structured = {}
-                    try:
-                        # result.content may already be a list of text parts with JSON
-                        if result.content:
-                            # Each item can be text; prefer structuredContent if present
-                            # The fastmcp helper in our server returns "structuredContent" in the text body as JSON too.
-                            text = result.content[0].text if hasattr(result.content[0], "text") else None
-                            if text:
-                                structured = json.loads(text)
-                    except Exception:
-                        structured = {"raw": str(result.content)}
+                    # Parse lines in order, handling function calls and final answer
+                    lines = result.split('\n')
+                    processed_function = False
+                    
+                    for line in lines:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        
+                        # Skip lines that look like conversation continuations
+                        if line.startswith("User:") or line.startswith("Assistant:"):
+                            continue
+                        
+                        # If we see FINAL_ANSWER, process it immediately regardless of what else happened
+                        if line.startswith("FINAL_ANSWER:"):
+                            # Extract and display the final answer
+                            final_answer = line.split("[")[1].split("]")[0]
+                            console.print(f"\n[green bold]Final Answer: {final_answer}[/green bold]")
+                            
+                            # Send result via Telegram
+                            telegram_message = f"Math Problem: {problem}\nAnswer: {final_answer}"
+                            try:
+                                telegram_result = await session.call_tool("send_telegram", arguments={"message": telegram_message})
+                                if telegram_result.content:
+                                    telegram_status = telegram_result.content[0].text
+                                    console.print(f"[cyan]Telegram: {telegram_status}[/cyan]")
+                            except Exception as e:
+                                console.print(f"[yellow]Telegram notification skipped: {e}[/yellow]")
+                            
+                            console.print("\n[green]Calculation completed![/green]")
+                            return
+                        
+                        # Skip additional function calls if we already processed one
+                        if processed_function:
+                            continue
+                            
+                        if line.startswith("FUNCTION_CALL:"):
+                            _, function_info = line.split(":", 1)
+                            parts = [p.strip() for p in function_info.split("|")]
+                            func_name = parts[0]
+                            call_key = f"{func_name}|{'|'.join(parts[1:])}"
 
-                    # Provide function response back to Gemini
-                    contents.append(
-                        gg.Content(
-                            role="tool",
-                            parts=[gg.Part.from_function_response(name=name, response=structured)]
-                        )
-                    )
+                            # Skip duplicate calls entirely
+                            if call_key in executed_calls:
+                                processed_function = True
+                                continue
+                            
+                            if func_name == "evaluate_expression":
+                                expression = parts[1]
+                                calc_result = await session.call_tool("evaluate_expression", arguments={"expr": expression})
+                                if calc_result.content:
+                                    value = calc_result.content[0].text
+                                    prompt += f"\nUser: Result is {value}. Let's verify."
+                                    conversation_history.append((expression, float(value)))
+                                executed_calls.add(call_key)
+                                processed_function = True
+                                    
+                            elif func_name == "check_answer":
+                                expression, expected = parts[1], float(parts[2])
+                                await session.call_tool("check_answer", arguments={
+                                    "verifier_expression": expression,
+                                    "final_answer": expected
+                                })
+                                prompt += f"\nUser: Verified correct."
+                                executed_calls.add(call_key)
+                                processed_function = True
+                                
+                            elif func_name == "step_add":
+                                a, b = float(parts[1]), float(parts[2])
+                                calc_result = await session.call_tool("step_add", arguments={"a": a, "b": b})
+                                if calc_result.content:
+                                    value = calc_result.content[0].text
+                                    prompt += f"\nUser: Result is {value}."
+                                    conversation_history.append((f"{a} + {b}", float(value)))
+                                executed_calls.add(call_key)
+                                processed_function = True
+                                    
+                            elif func_name == "step_subtract":
+                                a, b = float(parts[1]), float(parts[2])
+                                calc_result = await session.call_tool("step_subtract", arguments={"a": a, "b": b})
+                                if calc_result.content:
+                                    value = calc_result.content[0].text
+                                    prompt += f"\nUser: Result is {value}."
+                                    conversation_history.append((f"{a} - {b}", float(value)))
+                                executed_calls.add(call_key)
+                                processed_function = True
+                                    
+                            elif func_name == "step_multiply":
+                                a, b = float(parts[1]), float(parts[2])
+                                calc_result = await session.call_tool("step_multiply", arguments={"a": a, "b": b})
+                                if calc_result.content:
+                                    value = calc_result.content[0].text
+                                    prompt += f"\nUser: Result is {value}."
+                                    conversation_history.append((f"{a} * {b}", float(value)))
+                                executed_calls.add(call_key)
+                                processed_function = True
+                                    
+                            elif func_name == "step_divide":
+                                a, b = float(parts[1]), float(parts[2])
+                                calc_result = await session.call_tool("step_divide", arguments={"a": a, "b": b})
+                                if calc_result.content:
+                                    value = calc_result.content[0].text
+                                    prompt += f"\nUser: Result is {value}."
+                                    conversation_history.append((f"{a} / {b}", float(value)))
+                                executed_calls.add(call_key)
+                                processed_function = True
+                                    
+                            elif func_name == "step_power":
+                                base, exponent = float(parts[1]), float(parts[2])
+                                calc_result = await session.call_tool("step_power", arguments={"base": base, "exponent": exponent})
+                                if calc_result.content:
+                                    value = calc_result.content[0].text
+                                    prompt += f"\nUser: Result is {value}."
+                                    conversation_history.append((f"{base} ^ {exponent}", float(value)))
+                                executed_calls.add(call_key)
+                                processed_function = True
+                                    
+                            elif func_name == "simplify_expression":
+                                expression = parts[1]
+                                calc_result = await session.call_tool("simplify_expression", arguments={"expr": expression})
+                                if calc_result.content:
+                                    value = calc_result.content[0].text
+                                    prompt += f"\nUser: Simplified to {value}."
+                                executed_calls.add(call_key)
+                                processed_function = True
 
-            # 4) Print ONLY the final numeric answer (the system instruction enforces this)
-            print(final_text)
+                    # Keep prompt minimal; no extra assistant echoes to avoid repetition
+
+                console.print("\n[green]Calculation completed![/green]")
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
 
 if __name__ == "__main__":
-    import json
-    asyncio.run(run())
+    asyncio.run(main())

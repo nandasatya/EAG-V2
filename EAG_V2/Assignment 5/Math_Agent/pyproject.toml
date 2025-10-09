@@ -1,7 +1,14 @@
 [project]
 name = "math-agent"
 version = "0.1.0"
-description = "Add your description here"
+description = "Mathematical problem solver using Gemini AI and MCP"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "google-generativeai>=0.8.0",
+    "mcp>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "rich>=13.0.0",
+    "sympy>=1.12",
+    "requests>=2.31.0",
+]

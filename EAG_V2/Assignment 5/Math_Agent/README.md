@@ -54,15 +54,32 @@ An intelligent mathematical problem solver that uses Gemini AI with Model Contex
 ### Basic Usage
 
 ```bash
-# Solve a mathematical expression
-python3 math_solver.py "5 + 7"
+# Solve a mathematical expression (with uv)
+uv run math_solver.py "5 + 7"
 
 # Complex expression
-python3 math_solver.py "((3/4) + (5/6)) * (7 - (2 + 9/3))^2"
+uv run math_solver.py "((3/4) + (5/6)) * (7 - (2 + 9/3))^2"
 
 # Use default problem
-python3 math_solver.py
+uv run math_solver.py
 ```
+
+### Telegram Integration
+
+The Math Agent automatically sends the problem and answer to your Telegram bot after solving:
+
+```
+Math Problem: 7 * 8
+Answer: 56
+```
+
+To enable Telegram notifications, ensure your `.env` file contains:
+```env
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_CHAT_ID=your_chat_id
+```
+
+If Telegram is not configured, the agent will skip notifications gracefully.
 
 ### Example Output
 
