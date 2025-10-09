@@ -203,8 +203,9 @@ Your entire response should be a single line starting with either FUNCTION_CALL:
                     else:
                         print(f"DEBUG: Previous iteration responses: {iteration_response}")
                         current_query = current_query + "\n\n" + " ".join(iteration_response)
-                        current_query = current_query + "\n\nYou must continue with the next step in the Paint S workflow. What should you do next?"
+                        current_query = current_query + "  What should I do next?"
 
+                   # pdb.set_trace()
                     # Get model's response with timeout
                     print("Preparing to generate LLM response...")
                     prompt = f"{system_prompt}\n\nQuery: {current_query}"

@@ -4,6 +4,10 @@ from mcp.server.fastmcp.prompts import base
 from mcp.types import TextContent
 from mcp import types
 from PIL import Image as PILImage
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.dml.color import RGBColor
 import math
 import sys
 import time
@@ -19,6 +23,10 @@ mcp = FastMCP("Calculator")
 drawing_app = None
 # Global variable to store rectangle coordinates
 rectangle_coords = None
+# Global variable to store PowerPoint file path
+ppt_file_path = None
+# Global variable to store presentation object
+prs = None
 
 # macOS automation helper functions
 def run_applescript(script):
@@ -59,146 +67,129 @@ def open_drawing_app_macos():
         return False, f"Error opening drawing app: {str(e)}"
 
 def draw_rectangle_macos(x1, y1, x2, y2):
-    """Draw rectangle using PowerPoint app"""
-    global rectangle_coords
+    """Draw rectangle using python-pptx"""
+    global rectangle_coords, ppt_file_path, prs
     try:
         # Store rectangle coordinates globally
         rectangle_coords = [x1, y1, x2, y2]
         print(f"DEBUG: Stored rectangle coordinates: {rectangle_coords}")
         
-        # Try PowerPoint first, then fallback to PIL image
+        if not prs or not ppt_file_path:
+            return False, "PowerPoint presentation not created. Please call create_new_slide first."
+        
         try:
-            # Use AppleScript to create PowerPoint presentation and draw rectangle
-            script = f'''
-            tell application "Microsoft PowerPoint"
-                activate
-                delay 3
-                
-                try
-                    -- Create a new presentation with blank slide
-                    set newPres to make new presentation
-                    set slide 1 of newPres to make new slide at end of slides of newPres
-                    
-                    -- Set slide layout to blank
-                    set layout of slide 1 of newPres to blank layout
-                    
-                    -- Add a rectangle shape with proper positioning
-                    set rectShape to make new shape of slide 1 of newPres with properties {{shape type:rectangle}}
-                    set position of rectShape to {{{x1}, {y1}}}
-                    set size of rectShape to {{{x2 - x1}, {y2 - y1}}}
-                    set fill of rectShape to no fill
-                    set line of rectShape to {{color:{{red:0, green:0, blue:0}}, weight:4}}
-                    
-                    -- Make sure the rectangle is visible
-                    set visible of rectShape to true
-                    
-                    return "New PowerPoint slide created with rectangle from ({x1},{y1}) to ({x2},{y2})"
-                on error errorMessage
-                    return "PowerPoint automation failed: " & errorMessage
-                end try
-            end tell
-            '''
+            # Get the first slide
+            slide = prs.slides[0]
             
-            success, output, error = run_applescript(script)
-            if success:
-                return True, f"Rectangle drawn from ({x1},{y1}) to ({x2},{y2}) in PowerPoint"
-            else:
-                print(f"PowerPoint automation failed: {error}")
-                raise Exception("PowerPoint automation failed")
+            # Convert pixel coordinates to inches (better scaling for visibility)
+            # Scale down by a factor to fit on slide better
+            left = Inches(x1 / 100.0)
+            top = Inches(y1 / 100.0)
+            width = Inches((x2 - x1) / 100.0)
+            height = Inches((y2 - y1) / 100.0)
+            
+            # Add rectangle shape
+            shape = slide.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE,
+                left, top, width, height
+            )
+            
+            # Style the rectangle - make it VERY visible
+            shape.fill.solid()
+            shape.fill.fore_color.rgb = RGBColor(255, 255, 200)  # Light yellow fill
+            shape.line.color.rgb = RGBColor(255, 0, 0)  # RED border
+            shape.line.width = Pt(6)  # Thick border
+            
+            # Save the presentation
+            prs.save(ppt_file_path)
+            print(f"Rectangle drawn and saved to {ppt_file_path}")
+            
+            return True, f"Rectangle drawn from ({x1},{y1}) to ({x2},{y2}) in PowerPoint"
                 
         except Exception as e:
-            print(f"PowerPoint failed: {e}")
-            return False, f"PowerPoint is required but failed: {str(e)}"
+            print(f"PowerPoint drawing failed: {e}")
+            return False, f"PowerPoint drawing failed: {str(e)}"
             
     except Exception as e:
         return False, f"Error drawing rectangle: {str(e)}"
 
 def create_new_slide_macos():
     """Create a new slide in PowerPoint"""
+    global ppt_file_path, prs
     try:
-        # Use AppleScript to create a new slide in PowerPoint
-        script = '''
-        tell application "Microsoft PowerPoint"
-            activate
-            delay 2
-            
-            try
-                -- Create a new presentation
-                set newPres to make new presentation
-                set newSlide to slide 1 of newPres
-                
-                return "New slide created in PowerPoint"
-            on error errorMessage
-                return "PowerPoint slide creation failed: " & errorMessage
-            end try
-        end tell
-        '''
+        # Create a new PowerPoint presentation using python-pptx
+        prs = Presentation()
+        prs.slide_width = Inches(10)
+        prs.slide_height = Inches(7.5)
         
-        success, output, error = run_applescript(script)
-        if success:
-            return True, f"New slide created in PowerPoint"
-        else:
-            print(f"PowerPoint slide creation failed: {error}")
-            return False, f"PowerPoint slide creation failed: {error}"
+        # Add a blank slide
+        blank_slide_layout = prs.slide_layouts[6]  # 6 is blank layout
+        slide = prs.slides.add_slide(blank_slide_layout)
+        
+        # Save to a temporary file with timestamp to avoid caching
+        import datetime
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        ppt_file_path = os.path.join(tempfile.gettempdir(), f"mcp_powerpoint_{timestamp}.pptx")
+        prs.save(ppt_file_path)
+        print(f"PowerPoint file created at: {ppt_file_path}")
+        
+        # Open the PowerPoint file
+        subprocess.Popen(['open', ppt_file_path])
+        time.sleep(2)
+        
+        return True, f"New slide created in PowerPoint"
             
     except Exception as e:
         return False, f"Error creating new slide: {str(e)}"
 
 def add_text_macos(text):
-    """Add text to the drawing using PowerPoint app"""
-    global rectangle_coords
+    """Add text to the drawing using python-pptx"""
+    global rectangle_coords, ppt_file_path, prs
     try:
-        # Try PowerPoint first, then fallback to PIL image
+        if not prs or not ppt_file_path:
+            return False, "PowerPoint presentation not created. Please call create_new_slide first."
+        
+        if not rectangle_coords:
+            return False, "Rectangle not drawn. Please call draw_rectangle first."
+        
         try:
-            # Use AppleScript to add text to PowerPoint presentation
-            script = f'''
-            tell application "Microsoft PowerPoint"
-                activate
-                delay 2
-                
-                try
-                    -- Get the current presentation and slide
-                    set currentPres to active presentation
-                    set currentSlide to slide 1 of currentPres
-                    
-                    -- Add a text box in the center of the rectangle
-                    set textBox to make new shape of currentSlide with properties {{shape type:text box}}
-                    
-                    -- Calculate center position based on rectangle coordinates
-                    set centerX to 275
-                    set centerY to 175
-                    set position of textBox to {{centerX, centerY}}
-                    set size of textBox to {{300, 80}}
-                    
-                    -- Set text content and formatting
-                    set text of textBox to "{text}"
-                    set font size of text of textBox to 28
-                    set font color of text of textBox to {{red:255, green:0, blue:0}}
-                    set alignment of text of textBox to center
-                    set font name of text of textBox to "Arial"
-                    set bold of text of textBox to true
-                    
-                    -- Make sure text box is visible and positioned correctly
-                    set visible of textBox to true
-                    set locked of textBox to false
-                    
-                    return "Text '{text}' added inside the rectangle in PowerPoint"
-                on error errorMessage
-                    return "PowerPoint text automation failed: " & errorMessage
-                end try
-            end tell
-            '''
+            # Get the first slide
+            slide = prs.slides[0]
             
-            success, output, error = run_applescript(script)
-            if success:
-                return True, f"Text '{text}' added inside the rectangle in PowerPoint"
-            else:
-                print(f"PowerPoint text automation failed: {error}")
-                raise Exception("PowerPoint text automation failed")
+            # Calculate center position based on rectangle coordinates
+            x1, y1, x2, y2 = rectangle_coords
+            center_x = (x1 + x2) / 2
+            center_y = (y1 + y2) / 2
+            
+            # Convert to inches (better scaling for visibility)
+            left = Inches((center_x - 150) / 100.0)  # Center text box (300px wide)
+            top = Inches((center_y - 40) / 100.0)    # Center text box (80px tall)
+            width = Inches(300 / 100.0)
+            height = Inches(80 / 100.0)
+            
+            # Add text box
+            textbox = slide.shapes.add_textbox(left, top, width, height)
+            text_frame = textbox.text_frame
+            text_frame.text = str(text)
+            
+            # Format the text - make it VERY visible
+            paragraph = text_frame.paragraphs[0]
+            paragraph.font.size = Pt(44)  # LARGE text
+            paragraph.font.bold = True
+            paragraph.font.color.rgb = RGBColor(0, 0, 255)  # BLUE color (easier to see)
+            paragraph.font.name = "Arial"
+            from pptx.enum.text import PP_ALIGN
+            paragraph.alignment = PP_ALIGN.CENTER
+            
+            # Save the presentation
+            prs.save(ppt_file_path)
+            print(f"Text added and saved to {ppt_file_path}")
+            
+            return True, f"Text '{text}' added inside the rectangle in PowerPoint"
                 
         except Exception as e:
             print(f"PowerPoint text failed: {e}")
-            return False, f"PowerPoint is required but failed: {str(e)}"
+            return False, f"PowerPoint text failed: {str(e)}"
             
     except Exception as e:
         return False, f"Error adding text: {str(e)}"
@@ -343,7 +334,7 @@ def fibonacci_numbers(n: int) -> list:
 
 @mcp.tool()
 async def draw_rectangle(x1: int, y1: int, x2: int, y2: int) -> dict:
-    """Create new PowerPoint slide and draw rectangle from (x1,y1) to (x2,y2)"""
+    """Draw rectangle on the current PowerPoint slide from (x1,y1) to (x2,y2)"""
     global drawing_app
     try:
         if platform.system() == "Darwin":  # macOS
