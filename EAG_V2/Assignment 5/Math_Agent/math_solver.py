@@ -15,9 +15,10 @@ load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=api_key)
 
-async def generate_with_timeout(client, prompt, timeout=30):
+async def generate_with_timeout(client, prompt, timeout=30, llm_call_count=0):
     """Generate content with a timeout"""
     try:
+        console.print(f"\n[magenta]═══ Gemini LLM Call #{llm_call_count} ═══[/magenta]")
         loop = asyncio.get_event_loop()
         response = await asyncio.wait_for(
             loop.run_in_executor(
@@ -44,77 +45,82 @@ async def main():
             async with ClientSession(read, write) as session:
                 await session.initialize()
 
-                system_prompt = """You are a step-by-step mathematical reasoning agent designed to solve problems accurately using tools.
+                system_prompt = """You are a mathematical reasoning agent that solves problems step-by-step using tools.
 
-                                TOOLS AVAILABLE:
-                                1. evaluate_expression(expr: str) → Evaluate math expressions.
-                                2. check_answer(verifier_expression: str, final_answer: float) → Verify correctness.
+=== TOOLS ===
+1. evaluate_expression(expr) - Compute mathematical expression
+2. check_answer(expr, answer) - Verify result correctness
+3. send_telegram(message) - Send notification
 
-                                ---
+=== 4-STEP WORKFLOW ===
+Step 1: FUNCTION_CALL: evaluate_expression|<expression>
+Step 2: FUNCTION_CALL: check_answer|<expression>|<result>
+Step 3: FUNCTION_CALL: send_telegram|Problem: X, Answer: Y
+Step 4: TEXT OUTPUT ONLY (NO FUNCTION CALLS):
+        SELF_CHECK: <verification>
+        FINAL_ANSWER: [result]
 
-                                ### CORE INSTRUCTIONS
-                                1. **Think before you act.** First, read the problem carefully. Write out your reasoning step-by-step (Reasoning Phase).  
-                                2. **Tool Phase.** Use tools only after finishing your reasoning.  
-                                - Call `evaluate_expression` when ready to compute the full or partial expression.  
-                                - After receiving a result, verify it by calling `check_answer`.  
-                                3. **Verification Phase.** If verification fails, explain the issue and recompute.  
-                                4. **Final Phase.** End with one final line showing only the confirmed answer.
+=== OUTPUT FORMAT (use pipes, NOT JSON) ===
+FUNCTION_CALL: function_name|param1|param2
+or
+SELF_CHECK: [verification statement]
+FINAL_ANSWER: [result]
 
-                                ---
+=== REASONING PRINCIPLES ===
+- One action per response: Steps 1-3 = ONE function call each, Step 4 = TEXT ONLY
+- Wait for feedback: don't predict tool responses
+- NO FUNCTION CALLS in step 4: only output SELF_CHECK and FINAL_ANSWER text
+- Tag reasoning types in SELF_CHECK: (Arithmetic), (Logic), (Verification)
 
-                                ### OUTPUT FORMAT (MUST FOLLOW EXACTLY)
-                                Each message must contain exactly one of the following:
-                                - `REASONING:` followed by numbered logical steps.
-                                - `FUNCTION_CALL: function_name|param1|param2|...`
-                                - `FUNCTION_RESPONSE:` followed by the returned value from the tool.
-                                - `SELF_CHECK:` followed by your validation or correction reasoning.
-                                - `FINAL_ANSWER: [answer]`
+=== ERROR HANDLING ===
+- If tool fails: acknowledge error in SELF_CHECK, proceed if possible
+- If verification fails: note discrepancy in SELF_CHECK before FINAL_ANSWER
+- If uncertain: mention limitation in SELF_CHECK
+- Never hallucinate tool responses
 
-                                ---
+=== CONVERSATION LOOP ===
+After each FUNCTION_CALL, wait for user feedback before next step.
+User will provide: "Result is X" or "Verified correct" or "Message sent successfully"
+Use this feedback to proceed to next step.
 
-                                ### EXAMPLE WORKFLOW
-                                User: Solve (3 + 5) * 2  
+=== SELF_CHECK REQUIREMENTS ===
+Before FINAL_ANSWER, verify:
+1. Computation completed? (cite actual result from tool)
+2. Verification passed? (cite check_answer response)  
+3. Telegram sent? (cite send_telegram confirmation)
+4. Result format correct? (number, units if any)
 
-                                Assistant:
-                                REASONING:  
-                                1. Identify operation inside parentheses: 3 + 5 = 8  
-                                2. Multiply result by 2 → expression = 8 * 2  
+=== EXAMPLE ===
+User: Solve (3 + 5) * 2
 
-                                FUNCTION_CALL: evaluate_expression|(3 + 5) * 2  
+Response 1:
+FUNCTION_CALL: evaluate_expression|(3 + 5) * 2
 
-                                User: Result is 16.  
+User: Result is 16. Now do step #2: call check_answer
 
-                                Assistant:
-                                FUNCTION_CALL: check_answer|(3 + 5) * 2|16  
+Response 2:
+FUNCTION_CALL: check_answer|(3 + 5) * 2|16
 
-                                User: Verification OK.  
+User: Verified correct. Now do step #3: call send_telegram
 
-                                Assistant:
-                                SELF_CHECK: Verified successfully.  
-                                FINAL_ANSWER: [16]
+Response 3:
+FUNCTION_CALL: send_telegram|Problem: (3 + 5) * 2, Answer: 16
 
-                                ---
+User: Message sent successfully. Now do step #4: output SELF_CHECK and FINAL_ANSWER
 
-                                ### ERROR & UNCERTAINTY HANDLING
-                                - If a tool call fails or returns an unexpected value, write:
-                                `SELF_CHECK: Error detected - re-evaluating.`
-                                - Re-run the correct tool with corrected inputs.
-                                - Never skip verification or self-check.
-                                - If unsure, ask for clarification before finalizing.
+Response 4 (TEXT ONLY - NO MORE FUNCTION CALLS):
+SELF_CHECK: (Verification) Evaluated expression, got 16. Check_answer confirmed correctness. Telegram notification sent successfully. Result is integer, unitless as expected.
+FINAL_ANSWER: [16]
 
-                                ---
+=== CRITICAL: STEP 4 RULES ===
+After receiving "Message sent successfully", you MUST output ONLY text:
+- First line: SELF_CHECK: <summary of all 3 steps>
+- Second line: FINAL_ANSWER: [number]
+- DO NOT call any more functions
+- DO NOT output FUNCTION_CALL in step 4
 
-                                ### REASONING TAGGING
-                                Whenever reasoning is written, label each step with the type of reasoning:
-                                - (Arithmetic), (Logic), (Simplification), (Verification)
-
-                                ---
-
-                                ### SUMMARY
-                                - Always reason → compute → verify → finalize.
-                                - Never call a tool without prior reasoning.
-                                - Always confirm correctness before `FINAL_ANSWER`.
-                                - Use the exact structured format above in every response."""
+=== START ===
+Output step 1 now (evaluate_expression call only)."""
 
                 problem = " ".join(sys.argv[1:]).strip() or "((3/4) + (5/6)) * (7 - (2 + 9/3))^2 + 15 / (3 * (2 + 1))"
                 console.print(Panel(f"Problem: {problem}", border_style="cyan"))
@@ -123,12 +129,14 @@ async def main():
                 prompt = f"{system_prompt}\n\nSolve this problem step by step: {problem}"
                 conversation_history = []
                 executed_calls = set()  # Prevent duplicate tool invocations
+                llm_call_count = 0  # Track number of LLM calls
                 
                 # Initialize Gemini client
                 client = genai.GenerativeModel('gemini-2.0-flash')
 
                 while True:
-                    response = await generate_with_timeout(client, prompt)
+                    llm_call_count += 1
+                    response = await generate_with_timeout(client, prompt, llm_call_count=llm_call_count)
                     if not response or not response.text:
                         break
 
@@ -144,8 +152,10 @@ async def main():
                         if not line:
                             continue
                         
-                        # Skip lines that look like conversation continuations
-                        if line.startswith("User:") or line.startswith("Assistant:"):
+                        # Skip lines that look like conversation continuations (case-insensitive)
+                        line_upper = line.upper()
+                        if (line_upper.startswith("USER:") or line_upper.startswith("ASSISTANT:") or 
+                            line_upper.startswith("FUNCTION_RESPONSE:")):
                             continue
                         
                         # If we see FINAL_ANSWER, process it immediately regardless of what else happened
@@ -154,25 +164,17 @@ async def main():
                             final_answer = line.split("[")[1].split("]")[0]
                             console.print(f"\n[green bold]Final Answer: {final_answer}[/green bold]")
                             
-                            # Send result via Telegram
-                            telegram_message = f"Math Problem: {problem}\nAnswer: {final_answer}"
-                            try:
-                                telegram_result = await session.call_tool("send_telegram", arguments={"message": telegram_message})
-                                if telegram_result.content:
-                                    telegram_status = telegram_result.content[0].text
-                                    console.print(f"[cyan]Telegram: {telegram_status}[/cyan]")
-                            except Exception as e:
-                                console.print(f"[yellow]Telegram notification skipped: {e}[/yellow]")
-                            
                             console.print("\n[green]Calculation completed![/green]")
+                            console.print(f"[magenta]Total Gemini LLM Calls: {llm_call_count}[/magenta]")
                             return
                         
                         # Skip additional function calls if we already processed one
                         if processed_function:
                             continue
                             
-                        if line.startswith("FUNCTION_CALL:"):
-                            _, function_info = line.split(":", 1)
+                        if "FUNCTION_CALL:" in line:
+                            # Extract function call - handle "#1: FUNCTION_CALL:" or "FUNCTION_CALL:"
+                            function_info = line.split("FUNCTION_CALL:", 1)[1].strip()
                             parts = [p.strip() for p in function_info.split("|")]
                             func_name = parts[0]
                             call_key = f"{func_name}|{'|'.join(parts[1:])}"
@@ -187,7 +189,7 @@ async def main():
                                 calc_result = await session.call_tool("evaluate_expression", arguments={"expr": expression})
                                 if calc_result.content:
                                     value = calc_result.content[0].text
-                                    prompt += f"\nUser: Result is {value}. Let's verify."
+                                    prompt += f"\nUser: Result is {value}.\n\nNow do step #2: call check_answer"
                                     conversation_history.append((expression, float(value)))
                                 executed_calls.add(call_key)
                                 processed_function = True
@@ -198,7 +200,21 @@ async def main():
                                     "verifier_expression": expression,
                                     "final_answer": expected
                                 })
-                                prompt += f"\nUser: Verified correct."
+                                prompt += f"\nUser: Verified correct.\n\nNow do step #3: call send_telegram"
+                                executed_calls.add(call_key)
+                                processed_function = True
+                            
+                            elif func_name == "send_telegram":
+                                message = parts[1] if len(parts) > 1 else f"Math Problem: {problem}, Answer: [result]"
+                                try:
+                                    telegram_result = await session.call_tool("send_telegram", arguments={"message": message})
+                                    if telegram_result.content:
+                                        telegram_status = telegram_result.content[0].text
+                                        console.print(f"[cyan]Telegram: {telegram_status}[/cyan]")
+                                        prompt += f"\nUser: Message sent successfully.\n\nNow do step #4: output SELF_CHECK and FINAL_ANSWER"
+                                except Exception as e:
+                                    console.print(f"[yellow]Telegram notification failed: {e}[/yellow]")
+                                    prompt += f"\nUser: Message sending skipped.\n\nNow do step #4: output SELF_CHECK and FINAL_ANSWER"
                                 executed_calls.add(call_key)
                                 processed_function = True
                                 
